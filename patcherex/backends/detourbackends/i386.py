@@ -9,7 +9,9 @@ from patcherex.backends.detourbackends._utils import (
     DetourException, DoubleDetourException, DuplicateLabelsException,
     IncompatiblePatchesException, MissingBlockException)
 from patcherex.backends.misc import (ASM_ENTRY_POINT_PUSH_ENV,
-                                     ASM_ENTRY_POINT_RESTORE_ENV)
+                                     ASM_ENTRY_POINT_PUSH_ENV_64,
+                                     ASM_ENTRY_POINT_RESTORE_ENV,
+                                     ASM_ENTRY_POINT_RESTORE_ENV_64)
 from patcherex.patches import (AddCodePatch, AddEntryPointPatch, AddLabelPatch,
                                AddRODataPatch, AddRWDataPatch,
                                AddRWInitDataPatch, AddSegmentHeaderPatch,
@@ -194,9 +196,28 @@ class DetourBackendi386(DetourBackendElf):
             after_restore_entrypoint_patches = sorted([p for p in entrypoint_patches if p.after_restore], \
                 key=lambda x:-1*x.priority)
 
-            current_symbol_pos += len(utils.compile_asm("pusha\n",
-                                                                    current_symbol_pos,
-                                                                    bits=bits))
+            if self.structs.elfclass == 64:
+                current_symbol_pos += len(utils.compile_asm("""
+                    push rax
+                    push rbx
+                    push rcx
+                    push rdx
+                    push rbp
+                    push rdi
+                    push rsi
+                    push r8
+                    push r9
+                    push r10
+                    push r11
+                    push r12
+                    push r13
+                    push r14
+                    push r15
+                """, current_symbol_pos, bits=bits))
+            else:
+                current_symbol_pos += len(utils.compile_asm("pusha\n",
+                                                                        current_symbol_pos,
+                                                                        bits=bits))
             for patch in between_restore_entrypoint_patches:
                 code_len = len(utils.compile_asm(patch.asm_code,
                                                              current_symbol_pos,
@@ -205,9 +226,14 @@ class DetourBackendi386(DetourBackendElf):
                     self.name_map[patch.name] = current_symbol_pos
                 current_symbol_pos += code_len
             # now compile for real
-            new_code = utils.compile_asm(ASM_ENTRY_POINT_PUSH_ENV,
-                                         self.get_current_code_position(),
-                                         bits=bits)
+            if self.structs.elfclass == 64:
+                new_code = utils.compile_asm(ASM_ENTRY_POINT_PUSH_ENV,
+                                             self.get_current_code_position(),
+                                             bits=bits)
+            else:
+                new_code = utils.compile_asm(ASM_ENTRY_POINT_PUSH_ENV_64,
+                                             self.get_current_code_position(),
+                                             bits=bits)
             self.added_code += new_code
             self.ncontent = utils.bytes_overwrite(self.ncontent, new_code)
             for patch in between_restore_entrypoint_patches:
@@ -220,7 +246,10 @@ class DetourBackendi386(DetourBackendElf):
                 l.info("Added patch: %s", str(patch))
                 self.ncontent = utils.bytes_overwrite(self.ncontent, new_code)
 
-            restore_code = ASM_ENTRY_POINT_RESTORE_ENV
+            if self.structs.elfclass == 64:
+                restore_code = ASM_ENTRY_POINT_RESTORE_ENV_64
+            else:
+                restore_code = ASM_ENTRY_POINT_RESTORE_ENV
             current_symbol_pos += len(utils.compile_asm(restore_code,
                                                                     current_symbol_pos,
                                                                     bits=bits))
