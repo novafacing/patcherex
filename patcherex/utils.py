@@ -646,6 +646,7 @@ def compile_asm(code, base=None, name_map=None, bits=32):
     #print code
     #if base != None: print hex(base)
     #if name_map != None: print {k: hex(v) for k,v in name_map.iteritems()}
+    print("NASM Compiling code:\n{}".format(code))
     try:
         if name_map is not None:
             code = code.format(**name_map) # compile_asm

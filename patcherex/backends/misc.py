@@ -64,9 +64,10 @@ _clean_stack_loop_entrypoint:
     add rax, 4
     cmp rax, 0xbaaab000
     jne _clean_stack_loop_entrypoint
+mov rax, 0x202
+push rax
 xor rax, rax
 ; restore flags
-pushq 0x202
 popfq
 mov QWORD [rsp-0x8], rax
 '''

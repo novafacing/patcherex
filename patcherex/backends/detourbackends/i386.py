@@ -227,11 +227,11 @@ class DetourBackendi386(DetourBackendElf):
                 current_symbol_pos += code_len
             # now compile for real
             if self.structs.elfclass == 64:
-                new_code = utils.compile_asm(ASM_ENTRY_POINT_PUSH_ENV,
+                new_code = utils.compile_asm(ASM_ENTRY_POINT_PUSH_ENV_64,
                                              self.get_current_code_position(),
                                              bits=bits)
             else:
-                new_code = utils.compile_asm(ASM_ENTRY_POINT_PUSH_ENV_64,
+                new_code = utils.compile_asm(ASM_ENTRY_POINT_PUSH_ENV,
                                              self.get_current_code_position(),
                                              bits=bits)
             self.added_code += new_code
