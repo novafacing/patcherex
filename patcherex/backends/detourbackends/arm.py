@@ -1,11 +1,7 @@
 import bisect
 import logging
 import os
-import re
 from collections import defaultdict
-
-import capstone
-import keystone
 
 import cle
 from patcherex import utils
@@ -19,8 +15,7 @@ from patcherex.patches import (AddCodePatch, AddEntryPointPatch, AddLabelPatch,
                                InlinePatch, InsertCodePatch, RawFilePatch,
                                RawMemPatch, RemoveInstructionPatch,
                                ReplaceFunctionPatch, SegmentHeaderPatch)
-from patcherex.utils import (CLangException, ObjcopyException,
-                             UndefinedSymbolException)
+from patcherex.utils import CLangException
 
 l = logging.getLogger("patcherex.backends.DetourBackend")
 
@@ -228,7 +223,7 @@ class DetourBackendArm(DetourBackendElf):
         while True:
             name_list = [str(p) if (p is None or p.name is None) else p.name for p in applied_patches]
             l.info("applied_patches is: |%s|", "-".join(name_list))
-            assert all([a == b for a, b in zip(applied_patches, insert_code_patches)])
+            assert all(a == b for a, b in zip(applied_patches, insert_code_patches))
             for patch in insert_code_patches[len(applied_patches):]:
                 self.save_state(applied_patches)
                 try:
@@ -255,10 +250,16 @@ class DetourBackendArm(DetourBackendElf):
                 break #at this point we applied everything in current insert_code_patches
                 # TODO symbol name, for now no name_map for InsertCode patches
 
+        header_patches = [InsertCodePatch,InlinePatch,AddEntryPointPatch,AddCodePatch, \
+                AddRWDataPatch,AddRODataPatch,AddRWInitDataPatch]
+
         # 5.5) ReplaceFunctionPatch
         for patch in patches:
             if isinstance(patch, ReplaceFunctionPatch):
                 l.warning("ReplaceFunctionPatch: ARM/Thumb interworking is not yet supported.")
+                for name, addr in self.name_map.items():
+                    if patch.symbols is not None and name not in patch.symbols.keys():
+                        patch.symbols[name] = addr
                 is_thumb = self.check_if_thumb(patch.addr)
                 patch.addr = patch.addr - (patch.addr % 2)
                 new_code = self.compile_function(patch.asm_code, compiler_flags="-fPIE" if self.project.loader.main_object.pic else "", is_thumb=is_thumb, entry=patch.addr, symbols=patch.symbols)
@@ -268,6 +269,7 @@ class DetourBackendArm(DetourBackendElf):
                     file_offset = self.project.loader.main_object.addr_to_offset(patch.addr)
                     self.ncontent = utils.bytes_overwrite(self.ncontent, new_code, file_offset)
                 else:
+                    header_patches.append(ReplaceFunctionPatch)
                     detour_pos = self.get_current_code_position()
                     offset = self.project.loader.main_object.mapped_base if self.project.loader.main_object.pic else 0
                     new_code = self.compile_function(patch.asm_code, compiler_flags="-fPIE" if self.project.loader.main_object.pic else "", is_thumb=is_thumb, entry=detour_pos + offset, symbols=patch.symbols)
@@ -279,10 +281,8 @@ class DetourBackendArm(DetourBackendElf):
                 self.added_patches.append(patch)
                 l.info("Added patch: %s", str(patch))
 
-        header_patches = [InsertCodePatch,InlinePatch,AddEntryPointPatch,AddCodePatch, \
-                AddRWDataPatch,AddRODataPatch,AddRWInitDataPatch, ReplaceFunctionPatch]
-        if any([isinstance(p,ins) for ins in header_patches for p in self.added_patches]) or \
-                any([isinstance(p,SegmentHeaderPatch) for p in patches]):
+        if any(isinstance(p,ins) for ins in header_patches for p in self.added_patches) or \
+                any(isinstance(p,SegmentHeaderPatch) for p in patches):
             # either implicitly (because of a patch adding code or data) or explicitly, we need to change segment headers
 
             # 6) SegmentHeaderPatch
@@ -428,7 +428,7 @@ class DetourBackendArm(DetourBackendElf):
             else:
                 i.overwritten = "out"
         l.debug("\n".join([utils.instruction_to_str(i) for i in movable_instructions]))
-        assert any([i.overwritten != "out" for i in movable_instructions])
+        assert any(i.overwritten != "out" for i in movable_instructions)
 
         # replace overwritten instructions with nops
         for i in movable_instructions:
@@ -452,18 +452,9 @@ class DetourBackendArm(DetourBackendElf):
 
         return new_code
 
-    @staticmethod
-    def capstone_to_asm(instruction):
-            return instruction.mnemonic + " " + instruction.op_str.replace('{','{{').replace('}','}}')
-
-    @staticmethod
-    def disassemble(code, offset=0x0, is_thumb=False):
+    def disassemble(self, code, offset=0x0, is_thumb=False):
         offset = offset - 1 if is_thumb and offset % 2 == 1 else offset
-        md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB if is_thumb else capstone.CS_MODE_ARM)
-        md.detail = True
-        if isinstance(code, str):
-            code = bytes(map(ord, code))
-        return list(md.disasm(code, offset))
+        return super().disassemble(code, offset=offset, is_thumb=is_thumb)
 
     def compile_jmp(self, origin, target, is_thumb=False):
         jmp_str = '''
@@ -472,68 +463,16 @@ class DetourBackendArm(DetourBackendElf):
         return self.compile_asm(jmp_str, base=origin, is_thumb=is_thumb)
 
     @staticmethod
-    def compile_asm(code, base=None, name_map=None, is_thumb=False):
-        #print "=" * 10
-        #print code
-        #if base != None: print hex(base)
-        #if name_map != None: print {k: hex(v) for k,v in name_map.iteritems()}
-        try:
-            if name_map is not None:
-                code = code.format(**name_map)  # compile_asm
-            else:
-                code = re.subn(r'{.*?}', "0x41414141", code)[0]  # solve symbols
-        except KeyError as e:
-            raise UndefinedSymbolException(str(e)) from e
-        try:
-            ks = keystone.Ks(keystone.KS_ARCH_ARM, keystone.KS_MODE_THUMB if is_thumb else keystone.KS_MODE_ARM)
-            encoding, _ = ks.asm(code, base)
-        except keystone.KsError as e:
-            print("ERROR: %s" %e) #TODO raise some error
-        return bytes(encoding)
-
-    @staticmethod
     def get_c_function_wrapper_code(function_symbol):
         wcode = []
         wcode.append("bl {%s}" % function_symbol)
 
         return "\n".join(wcode)
 
-    @staticmethod
-    def compile_c(code, optimization='-Oz', compiler_flags="", is_thumb=False):
-        # TODO symbol support in c code
-        with utils.tempdir() as td:
-            c_fname = os.path.join(td, "code.c")
-            object_fname = os.path.join(td, "code.o")
-            bin_fname = os.path.join(td, "code.bin")
+    def compile_c(self, code, optimization='-Oz', compiler_flags="", is_thumb=False): # pylint: disable=arguments-differ
+        return super().compile_c(code, optimization=optimization, compiler_flags=("-mthumb " if is_thumb else "-mno-thumb ") + compiler_flags)
 
-            fp = open(c_fname, 'w')
-            fp.write(code)
-            fp.close()
-
-            res = utils.exec_cmd("clang -nostdlib -mno-sse -target arm-linux-gnueabihf -ffreestanding %s %s -o %s -c %s %s" \
-                            % ("-mthumb" if is_thumb else "-mno-thumb", optimization, object_fname, c_fname, compiler_flags), shell=True)
-            if res[2] != 0:
-                print("CLang error:")
-                print(res[0])
-                print(res[1])
-                fp = open(c_fname, 'r')
-                fcontent = fp.read()
-                fp.close()
-                print("\n".join(["%02d\t%s"%(i+1,j) for i, j in enumerate(fcontent.split("\n"))]))
-                raise CLangException
-            res = utils.exec_cmd("objcopy -B i386 -O binary -j .text %s %s" % (object_fname, bin_fname), shell=True)
-            if res[2] != 0:
-                print("objcopy error:")
-                print(res[0])
-                print(res[1])
-                raise ObjcopyException
-            fp = open(bin_fname, "rb")
-            compiled = fp.read()
-            fp.close()
-        return compiled
-
-    @staticmethod
-    def compile_function(code, compiler_flags="", is_thumb=False, entry=0x0, symbols=None):
+    def compile_function(self, code, compiler_flags="", is_thumb=False, entry=0x0, symbols=None):
         with utils.tempdir() as td:
             c_fname = os.path.join(td, "code.c")
             object_fname = os.path.join(td, "code.o")
@@ -543,10 +482,10 @@ class DetourBackendArm(DetourBackendElf):
             with open(c_fname, 'w') as fp:
                 fp.write(code)
 
-            linker_script = "SECTIONS { .text : { *(.text) "
+            linker_script = "SECTIONS { .text : SUBALIGN(0) { . = " + hex(entry) + "; *(.text) "
             if symbols:
                 for i in symbols:
-                    linker_script += i + " = " + hex(symbols[i] - entry) + ";"
+                    linker_script += i + " = " + hex(symbols[i]) + ";"
             linker_script += "}}"
 
             with open(linker_script_fname, 'w') as fp:
@@ -562,5 +501,20 @@ class DetourBackendArm(DetourBackendElf):
                 raise Exception("Linking Error: " + str(res[0] + res[1], 'utf-8'))
 
             ld = cle.Loader(object2_fname, main_opts={"base_addr": 0x0})
-            compiled = ld.memory.load(ld.all_objects[0].entry, 0xFFFFFFFFFFFFFFFF)
+            compiled = ld.memory.load(ld.all_objects[0].entry + entry, ld.memory.max_addr)
+
+            disasm = self.disassemble(compiled, entry, is_thumb=is_thumb)
+            disasm_str = ""
+            for instr in disasm:
+                if is_thumb and instr.mnemonic == "bl" and instr.operands[0].imm in symbols.values():
+                    disasm_str += self.capstone_to_asm(instr).replace("bl", "blx") + "\n"
+                elif is_thumb and instr.mnemonic == "blx" and (instr.operands[0].imm + 1) in symbols.values():
+                    disasm_str += self.capstone_to_asm(instr).replace("blx", "bl") + "\n"
+                elif not is_thumb and instr.mnemonic == "bl" and (instr.operands[0].imm + 1) in symbols.values():
+                    disasm_str += self.capstone_to_asm(instr).replace("bl", "blx") + "\n"
+                elif not is_thumb and instr.mnemonic == "blx" and instr.operands[0].imm in symbols.values():
+                    disasm_str += self.capstone_to_asm(instr).replace("blx", "bl") + "\n"
+                else:
+                    disasm_str += self.capstone_to_asm(instr) + "\n"
+            compiled = self.compile_asm(disasm_str, base=entry, name_map={}, is_thumb=is_thumb)
         return compiled
