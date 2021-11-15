@@ -13,7 +13,6 @@ setup(
         "psutil",
         "timeout-decorator",
         "subprocess32",
-        "povsim",
         "compilerex",
         "fidget",
         "python-resources",
