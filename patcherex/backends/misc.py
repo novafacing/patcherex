@@ -58,16 +58,16 @@ pop rcx         ;restore current rcx
 pop rbx         ;restore current rbx
 pop rax         ;restore current rax
 
-mov rax,  0xbaaaafa0
-_clean_stack_loop_entrypoint:
-    mov [rax], rdx
-    add rax, 4
-    cmp rax, 0xbaaab000
-    jne _clean_stack_loop_entrypoint
-mov rax, 0x202
-push rax
-xor rax, rax
-; restore flags
-popfq
-mov QWORD [rsp-0x8], rax
+; mov rax,  0xbaaaafa0
+; _clean_stack_loop_entrypoint:
+;     mov [rax], rdx
+;     add rax, 4
+;     cmp rax, 0xbaaab000
+;     jne _clean_stack_loop_entrypoint
+; mov rax, 0x202
+; push rax
+; xor rax, rax
+; ; restore flags
+; popfq
+; mov QWORD [rsp-0x8], rax
 '''
