@@ -21,6 +21,5 @@ setup(
         "pyelftools",
         "python-magic",
         "termcolor",
-        "tracer",
     ],
 )
