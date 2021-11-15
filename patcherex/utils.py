@@ -618,13 +618,22 @@ def disassemble(code, offset=0x0, bits=32):
     return list(md.disasm(code, offset))
 
 
-def compile_jmp(origin, target):
-    jmp_str = '''
-        USE32
-        org {code_loaded_address}
+def compile_jmp(origin, target, bits=32):
+    if bits == 32:
+        jmp_str = '''
+            USE32
+            org {code_loaded_address}
 
-        jmp {target}
-    '''.format(**{'code_loaded_address': hex(int(origin)), 'target': hex(int(target))})
+            jmp {target}
+        '''.format(**{'code_loaded_address': hex(int(origin)), 'target': hex(int(target))})
+    elif bits == 64:
+        jmp_str = '''
+            USE32
+            org {code_loaded_address}
+
+            jmp {target}
+        '''.format(**{'code_loaded_address': hex(int(origin)), 'target': hex(int(target))})
+
     return compile_asm(jmp_str)
 
 
