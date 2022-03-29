@@ -684,6 +684,7 @@ class DetourBackendi386(DetourBackendElf):
                             "byte has been already touched: %08x" % b
                         )
                     self.touched_bytes.add(b)
+                l.debug(f"Overwriting instruction at {i.address:#0x} with a nop.")
                 self.patch_bin(i.address, one_byte_nop * len(i.bytes))
 
         # insert the jump detour
